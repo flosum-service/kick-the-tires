@@ -1,0 +1,124 @@
+# Repository Layout: Multiple environments using separate directories
+# environments/      - Environment-specific runs
+#   ├── production/   - Production infrastructure
+#   └── development/  - Development infrastructure
+#
+# Setup: Follow AWS OIDC guide: https://docs.terrateam.io/cloud-providers/aws/
+
+enabled: false
+dirs:
+  environments/production/**:
+    tags:
+      - production
+  environments/development/**:
+    tags:
+      - development
+  network:
+    when_modified:
+      file_patterns:
+        - ${DIR}/*.tf
+  database:
+    when_modified:
+      depends_on: dir:network
+      file_patterns:
+        - ${DIR}/*.tf
+  application:
+    when_modified:
+      depends_on: dir:database
+      file_patterns:
+        - ${DIR}/*.tf
+workflows:
+  - tag_query: production
+    plan:
+      - type: oidc
+        provider: aws
+        role_arn: arn:aws:iam::123456789012:role/terrateam-role
+      - type: init
+      - type: plan
+      - type: conftest
+        extra_args:
+          - "--policy"
+          - policies/
+    apply:
+      - type: oidc
+        provider: aws
+        role_arn: arn:aws:iam::123456789012:role/terrateam-role
+      - type: init
+      - type: apply
+  - tag_query: development
+    plan:
+      - type: oidc
+        provider: aws
+        role_arn: arn:aws:iam::123456789012:role/terrateam-role
+      - type: init
+      - type: plan
+      - type: conftest
+        extra_args:
+          - "--policy"
+          - policies/
+    apply:
+      - type: oidc
+        provider: aws
+        role_arn: arn:aws:iam::123456789012:role/terrateam-role
+      - type: init
+      - type: apply
+apply_requirements:
+  checks:
+    - tag_query: production
+      approved:
+        enabled: true
+        all_of:
+          - team:sre
+      merge_conflicts:
+        enabled: true
+      status_checks:
+        enabled: true
+    - tag_query: development
+      approved:
+        enabled: true
+        any_of:
+          - team:developers
+        any_of_count: 1
+      merge_conflicts:
+        enabled: true
+      status_checks:
+        enabled: false
+drift:
+  enabled: true
+  schedules:
+    default:
+      tag_query: ""
+      schedule: daily
+access_control:
+  enabled: true
+  ci_config_update:
+    - team:sre
+  terrateam_config_update:
+    - team:sre
+  unlock:
+    - team:sre
+  files:
+    bin/rotate-prod-secrets.sh:
+      - role:admin
+  policies:
+    - tag_query: production
+      plan:
+        - team:sre
+      apply:
+        - team:sre
+      apply_with_superapproval:
+        - team:developers
+      superapproval:
+        - team:security
+    - tag_query: development
+      plan:
+        - team:developers
+      apply:
+        - team:developers
+      apply_force:
+        - team:developers
+    - tag_query: ""
+      plan:
+        - "*"
+      apply:
+        - team:sre
